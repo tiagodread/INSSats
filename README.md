@@ -349,16 +349,15 @@ INSSats vaults are flexible and allow customization at creation time:
 3. [TECHNICAL-IMPLEMENTATION.md](TECHNICAL-IMPLEMENTATION.md) - Smart contract code
 
 **🟡 IMPORTANT - Reference during development:**
-4. [ARCHITECTURE.md](ARCHITECTURE.md) - System design diagrams
-5. [SIMPLICITYHL-GUIDE.md](SIMPLICITYHL-GUIDE.md) - Language reference
-6. [TEST-SCENARIOS.md](TEST-SCENARIOS.md) - Security analysis
+4. [SIMPLICITYHL-GUIDE.md](SIMPLICITYHL-GUIDE.md) - Language reference
+5. [TEST-SCENARIOS.md](TEST-SCENARIOS.md) - Security analysis
 
 **🟢 OPTIONAL - Use as needed:**
-7. [PROJECT-STRUCTURE.md](PROJECT-STRUCTURE.md) - Documentation guide
-8. [QUICK-CHECKLIST.md](QUICK-CHECKLIST.md) - Hackathon checklist
-9. [STRATEGIC-DECISIONS.md](STRATEGIC-DECISIONS.md) - Decision-making guide
-10. [SATSHACK-2025-PLAN.md](SATSHACK-2025-PLAN.md) - Hackathon plan
-11. [FILES-OVERVIEW.md](FILES-OVERVIEW.md) - File structure
+6. [PROJECT-STRUCTURE.md](PROJECT-STRUCTURE.md) - Documentation guide
+7. [QUICK-CHECKLIST.md](QUICK-CHECKLIST.md) - Hackathon checklist
+8. [STRATEGIC-DECISIONS.md](STRATEGIC-DECISIONS.md) - Decision-making guide
+9. [SATSHACK-2025-PLAN.md](SATSHACK-2025-PLAN.md) - Hackathon plan
+10. [FILES-OVERVIEW.md](FILES-OVERVIEW.md) - File structure
 
 ### 📖 By Use Case
 
@@ -375,7 +374,7 @@ INSSats vaults are flexible and allow customization at creation time:
 → [TECHNICAL-IMPLEMENTATION.md](TECHNICAL-IMPLEMENTATION.md)
 
 **"What's the architecture?"**
-→ [ARCHITECTURE.md](ARCHITECTURE.md)
+→ [TECHNICAL-IMPLEMENTATION.md](TECHNICAL-IMPLEMENTATION.md) - See "System Architecture" section
 
 **"How do I setup the environment?"**
 → [setup-satshack.sh](setup-satshack.sh)

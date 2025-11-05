@@ -472,7 +472,7 @@ INSSats **is**:
 
 ### For Developers
 1. Read this complete document
-2. Review `ARCHITECTURE.md` for technical architecture
+2. Review [TECHNICAL-IMPLEMENTATION.md](TECHNICAL-IMPLEMENTATION.md) for smart contract code
 3. Study Simplicity examples (multisig + timelock)
 4. Plan MVP for Satshack
 
