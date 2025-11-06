@@ -3,6 +3,10 @@ set -euo pipefail
 
 pause() { read -p "Press Enter to continue..." ; echo ; echo ; }
 
+# Get the directory where the script is located and the project root
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+
 # Note: this assumes that you have a local program called elements-cli
 # that can be run with no arguments and that talks to a local elementsd
 # synchronized to Liquid testnet.  That might not be true for everyone's
@@ -14,8 +18,13 @@ pause() { read -p "Press Enter to continue..." ; echo ; echo ; }
 # Sempre use o comando docker compose diretamente para garantir portabilidade
 ELEMENTS_CLI="docker compose exec -T elementsd1 elements-cli"
 
-PROGRAM_SOURCE="$HOME/tiago/contract-builder/contracts/htlc.simf"
-WITNESS_FILE="$HOME/tiago/contract-builder/contracts/htlc.complete.wit"
+PROGRAM_SOURCE="${PROGRAM_SOURCE:-$PROJECT_ROOT/contracts/htlc.simf}"
+WITNESS_FILE="${WITNESS_FILE:-$PROJECT_ROOT/contracts/htlc.complete.wit}"
+
+# External scripts for faucet operations (can be overridden via environment variables)
+FAUCET_SCRIPT="${FAUCET_SCRIPT:-$HOME/faucet.sh}"
+EXTRACT_TX_SCRIPT="${EXTRACT_TX_SCRIPT:-$HOME/extract-transaction.sh}"
+
 # This is an unspendable public key address.
 # It is semi-hardcoded in some Simplicity tools. You can change it in order
 # to make existing contract source code have a different address on the
@@ -77,7 +86,7 @@ pause
 # Here we use a curl command to contact the Liquid Testnet faucet to
 # ask it to fund our contract
 echo Running curl to connect to Liquid Testnet faucet...
-FAUCET_TRANSACTION=$(bash ~/faucet.sh "$CONTRACT_ADDRESS" | bash ~/extract-transaction.sh)
+FAUCET_TRANSACTION=$(bash "$FAUCET_SCRIPT" "$CONTRACT_ADDRESS" | bash "$EXTRACT_TX_SCRIPT")
 
 echo "FAUCET_TRANSACTION = $FAUCET_TRANSACTION"
 

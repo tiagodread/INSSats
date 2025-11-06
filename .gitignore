@@ -1,0 +1,86 @@
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Node.js
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+package-lock.json
+.pnpm-debug.log*
+
+# Build outputs
+dist/
+build/
+*.log
+
+# IDEs and editors
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.project
+.classpath
+.settings/
+*.sublime-project
+*.sublime-workspace
+
+# Environment variables
+.env
+.env.local
+.env.*.local
+*.env
+
+# Docker
+docker-compose.override.yml
+*.pid
+*.seed
+
+# Infra / Docker volumes and logs
+infra/data/
+infra/logs/
+infra/volumes/
+*.socket
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+*.bak
+*.cache
+
+# Scripts outputs
+scripts/*.out
+scripts/tmp/
+
+# Contracts
+contracts/*.compiled
+contracts/*.wit.tmp
+contracts/tmp/
+
+# OS
+Thumbs.db
+
+# Test coverage
+coverage/
+*.coverage
+.nyc_output/
+
+# Secrets and keys (be careful!)
+*.key
+*.pem
+*.p12
+*.pfx
+secrets/
+credentials.json
+
+# Simplicity temp files
+*.simf.tmp
+
+# Testnets
+infra/bitcoindir/regtest/
+infra/elementsdir1/liquidtestnet/
+infra/elementsdir2/liquidtestnet/
