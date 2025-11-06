@@ -25,16 +25,18 @@ WITNESS_FILE="$HOME/tiago/contract-builder/contracts/htlc.complete.wit"
 # is an unspendable value (if it is changed from this default). Otherwise
 # the contract creator may be able to unilaterally steal value from
 # the contract.
+# TODO: This might be a public key with no known private key and both parties agree on it. Research this.
 INTERNAL_KEY="50929b74c1a04954b78b4b6035e97a5e078a5a0f28ec96d547bfee9ace803ac0"
 TMPDIR=$(mktemp -d)
 
+# Private key corresponding to one of the three public keys
 PRIVKEY_1="0000000000000000000000000000000000000000000000000000000000000001"
 
 # Hardcoded address of the Liquid testnet for returning tLBTC
 # (so that they aren't wasted!)
 # We could also send these to our own wallet, but here we are choosing
 # to send them back.
-# todo: atualizar para o endereço do cliente
+# TODO: Change this address to customer address
 FAUCET_ADDRESS=tlq1qq2g07nju42l0nlx0erqa3wsel2l8prnq96rlnhml262mcj7pe8w6ndvvyg237japt83z24m8gu4v3yfhaqvrqxydadc9scsmw
 FAUCET_ADDRESS=$($ELEMENTS_CLI validateaddress "$FAUCET_ADDRESS" | jq -r .unconfidential)
 
@@ -70,6 +72,8 @@ done
 
 pause
 
+# TODO: The contract is now created and we have its address.
+
 # Here we use a curl command to contact the Liquid Testnet faucet to
 # ask it to fund our contract
 echo Running curl to connect to Liquid Testnet faucet...
@@ -78,7 +82,7 @@ FAUCET_TRANSACTION=$(bash ~/faucet.sh "$CONTRACT_ADDRESS" | bash ~/extract-trans
 echo "FAUCET_TRANSACTION = $FAUCET_TRANSACTION"
 
 
-# aqui termina a parte de criacao do contrato e funding
+# TODO: The contract is now created and funds have been sent to it.
 
 pause
 
