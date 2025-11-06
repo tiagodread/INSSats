@@ -47,11 +47,23 @@ fn create_vault(
     urgent_timelock: u32,
     key_recovery_timelock: u32,
     params_change_timelock: u32
-) -> (u256, u256, u256, u32, u64, u32, u32, u32, u32, u64, u32) {
+) {
+    // Validate unique keys using match with block expressions
+    // If keys are equal, force failure with impossible assertion
+    match jet::eq_256(saver, broker) {
+        true => { assert!(jet::lt_32(1, 0)); },  // Force failure if equal
+        false => { assert!(jet::lt_32(0, 1)); }  // Always true - continue
+    };
 
-    // TODO: Validate unique keys (saver != broker != keeper)
-    // Skipped for now due to bool/u1 type complexity
-    // Will implement with proper pattern matching later
+    match jet::eq_256(broker, keeper) {
+        true => { assert!(jet::lt_32(1, 0)); },
+        false => { assert!(jet::lt_32(0, 1)); }
+    };
+
+    match jet::eq_256(saver, keeper) {
+        true => { assert!(jet::lt_32(1, 0)); },
+        false => { assert!(jet::lt_32(0, 1)); }
+    };
 
     // Validate fee range (0-10000 basis points = 0-100%)
     assert!(jet::le_32(broker_fee_bp, 10000));
@@ -71,41 +83,23 @@ fn create_vault(
 
     // params_change_timelock > 0
     assert!(jet::lt_32(0, params_change_timelock));
-
-    // Build VaultConfig tuple
-    let total_balance: u64 = 0;
-    let created_at: u32 = get_current_height();
-
-    // Return VaultConfig as 11-element tuple
-    (
-        saver,                      // .0
-        broker,                     // .1
-        keeper,                     // .2
-        broker_fee_bp,              // .3
-        urgent_fee,                 // .4
-        planned_timelock,           // .5
-        urgent_timelock,            // .6
-        key_recovery_timelock,      // .7
-        params_change_timelock,     // .8
-        total_balance,              // .9
-        created_at                  // .10
-    )
 }
 
 // ============================================================================
 // Main entry point
 // ============================================================================
 fn main() {
-    // TODO: Validate unique keys (saver != broker != keeper)
-    // Skipped for now - will implement with proper pattern matching later
-
-    // Validate fee range (0-10000 basis points = 0-100%)
-    assert!(jet::le_32(param::BROKER_FEE_BP, 10000));
-
-    // Validate timelocks are positive
-    assert!(jet::lt_32(0, param::PLANNED_TIMELOCK));
-    assert!(jet::lt_32(0, param::URGENT_TIMELOCK));
-    assert!(jet::le_32(param::URGENT_TIMELOCK, param::PLANNED_TIMELOCK));
-    assert!(jet::lt_32(0, param::KEY_RECOVERY_TIMELOCK));
-    assert!(jet::lt_32(0, param::PARAMS_CHANGE_TIMELOCK));
+    // Validate vault parameters
+    // All validations happen inside create_vault
+    create_vault(
+        param::SAVER_PUBKEY,
+        param::BROKER_PUBKEY,
+        param::KEEPER_PUBKEY,
+        param::BROKER_FEE_BP,
+        param::URGENT_FEE,
+        param::PLANNED_TIMELOCK,
+        param::URGENT_TIMELOCK,
+        param::KEY_RECOVERY_TIMELOCK,
+        param::PARAMS_CHANGE_TIMELOCK
+    )
 }
