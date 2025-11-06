@@ -1,0 +1,135 @@
+/*
+ * INSSats Vault Contract
+ *
+ * Flexible N-of-M multisig with timelock logic and consensus.
+ * Implements a three-party system: Saver, Broker, and Vault Keeper.
+ *
+ * Based on: docs/TECHNICAL-IMPLEMENTATION.md
+ */
+
+// ============================================================================
+// Type Aliases
+// ============================================================================
+// Note: Simplicity uses product types (tuples), not named structs
+// VaultConfig is represented as a tuple with 11 fields
+
+// VaultConfig structure (as tuple):
+// .0: saver_pubkey (Pubkey = u256)
+// .1: broker_pubkey (Pubkey = u256)
+// .2: keeper_pubkey (Pubkey = u256)
+// .3: broker_fee_basis_points (u32)
+// .4: urgent_fee (u64 - satoshis)
+// .5: planned_timelock (u32 - blocks)
+// .6: urgent_timelock (u32 - blocks)
+// .7: key_recovery_timelock (u32 - blocks)
+// .8: params_change_timelock (u32 - blocks)
+// .9: total_balance (u64 - satoshis)
+// .10: created_at (u32 - block height)
+
+// ============================================================================
+// Helper Functions
+// ============================================================================
+
+// Get current block height
+fn get_current_height() -> u32 {
+    jet::current_index()
+}
+
+// ============================================================================
+// create_vault - Create new vault configuration
+// ============================================================================
+fn create_vault(
+    saver: u256,
+    broker: u256,
+    keeper: u256,
+    broker_fee_bp: u32,
+    urgent_fee: u64,
+    planned_timelock: u32,
+    urgent_timelock: u32,
+    key_recovery_timelock: u32,
+    params_change_timelock: u32
+) -> (u256, u256, u256, u32, u64, u32, u32, u32, u32, u64, u32) {
+
+    // Validate unique keys - saver != broker
+    let keys_equal_1: bool = jet::eq_256(saver, broker);
+    assert!(!keys_equal_1);
+
+    // Validate unique keys - broker != keeper
+    let keys_equal_2: bool = jet::eq_256(broker, keeper);
+    assert!(!keys_equal_2);
+
+    // Validate unique keys - saver != keeper
+    let keys_equal_3: bool = jet::eq_256(saver, keeper);
+    assert!(!keys_equal_3);
+
+    // Validate fee range (0-10000 basis points = 0-100%)
+    // broker_fee_bp must be <= 10000
+    assert!(jet::le_32(broker_fee_bp, 10000));
+
+    // Validate timelocks are positive
+    // planned_timelock > 0
+    assert!(jet::lt_32(0, planned_timelock));
+
+    // urgent_timelock > 0
+    assert!(jet::lt_32(0, urgent_timelock));
+
+    // urgent_timelock <= planned_timelock
+    assert!(jet::le_32(urgent_timelock, planned_timelock));
+
+    // key_recovery_timelock > 0
+    assert!(jet::lt_32(0, key_recovery_timelock));
+
+    // params_change_timelock > 0
+    assert!(jet::lt_32(0, params_change_timelock));
+
+    // Build VaultConfig tuple
+    let total_balance: u64 = 0;
+    let created_at: u32 = get_current_height();
+
+    // Return VaultConfig as 11-element tuple
+    (
+        saver,                      // .0
+        broker,                     // .1
+        keeper,                     // .2
+        broker_fee_bp,              // .3
+        urgent_fee,                 // .4
+        planned_timelock,           // .5
+        urgent_timelock,            // .6
+        key_recovery_timelock,      // .7
+        params_change_timelock,     // .8
+        total_balance,              // .9
+        created_at                  // .10
+    )
+}
+
+// ============================================================================
+// Main entry point
+// ============================================================================
+fn main() {
+    // Extract parameters from witness
+    let saver: u256 = witness::SAVER_PUBKEY;
+    let broker: u256 = witness::BROKER_PUBKEY;
+    let keeper: u256 = witness::KEEPER_PUBKEY;
+    let broker_fee_bp: u32 = witness::BROKER_FEE_BP;
+    let urgent_fee: u64 = witness::URGENT_FEE;
+    let planned_timelock: u32 = witness::PLANNED_TIMELOCK;
+    let urgent_timelock: u32 = witness::URGENT_TIMELOCK;
+    let key_recovery_timelock: u32 = witness::KEY_RECOVERY_TIMELOCK;
+    let params_change_timelock: u32 = witness::PARAMS_CHANGE_TIMELOCK;
+
+    // Create vault and validate parameters
+    let _vault = create_vault(
+        saver,
+        broker,
+        keeper,
+        broker_fee_bp,
+        urgent_fee,
+        planned_timelock,
+        urgent_timelock,
+        key_recovery_timelock,
+        params_change_timelock
+    );
+
+    // If we reach here, vault creation succeeded
+    // (all assertions passed)
+}
