@@ -1,23 +1,32 @@
 #!/bin/bash
 set -euo pipefail
 
-pause() { 
+pause() {
   if [ -z "${NO_PAUSE:-}" ]; then
-    read -p "Press Enter to continue..." 
-    echo 
-    echo 
+    read -p "Press Enter to continue..."
+    echo
+    echo
   fi
 }
+
+# Get the directory where the script is located and the project root
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 # Use Esplora API instead of local elementsd
 ESPLORA_API="${ESPLORA_API:-https://blockstream.info/liquidtestnet/api}"
 
 # Set the infra directory for docker commands
-INFRA_DIR="${INFRA_DIR:-$HOME/tiago/INSSats/infra}"
+INFRA_DIR="${INFRA_DIR:-$PROJECT_ROOT/infra}"
 
 # Accept parameters from environment or use defaults
-PROGRAM_SOURCE="${PROGRAM_SOURCE:-$HOME/tiago/INSSats/contracts/htlc.simf}"
-WITNESS_FILE="${WITNESS_FILE:-$HOME/tiago/INSSats/contracts/htlc.complete.wit}"
+PROGRAM_SOURCE="${PROGRAM_SOURCE:-$PROJECT_ROOT/contracts/htlc.simf}"
+WITNESS_FILE="${WITNESS_FILE:-$PROJECT_ROOT/contracts/htlc.complete.wit}"
+
+# External scripts for faucet operations (can be overridden via environment variables)
+FAUCET_SCRIPT="${FAUCET_SCRIPT:-$HOME/faucet.sh}"
+EXTRACT_TX_SCRIPT="${EXTRACT_TX_SCRIPT:-$HOME/extract-transaction.sh}"
+
 # This is an unspendable public key address.
 # It is semi-hardcoded in some Simplicity tools. You can change it in order
 # to make existing contract source code have a different address on the
@@ -99,7 +108,7 @@ echo "=== Funding Contract ==="
 # ask it to fund our contract
 echo "Requesting funds from faucet for address: $CONTRACT_ADDRESS"
 echo "Running curl to connect to Liquid Testnet faucet..."
-FAUCET_TRANSACTION=$(bash ~/faucet.sh "$CONTRACT_ADDRESS" | bash ~/extract-transaction.sh)
+FAUCET_TRANSACTION=$(bash "$FAUCET_SCRIPT" "$CONTRACT_ADDRESS" | bash "$EXTRACT_TX_SCRIPT")
 
 echo "FAUCET_TRANSACTION = $FAUCET_TRANSACTION"
 
