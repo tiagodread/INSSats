@@ -298,8 +298,39 @@ echo "View online at https://blockstream.info/liquidtestnet/tx/$TXID?expand"
 # Verify transaction
 echo
 echo "Verifying transaction..."
-sleep 3
-curl -s "$ESPLORA_API/tx/$TXID" | jq
+echo "Waiting for transaction to be indexed by Esplora API..."
+
+MAX_VERIFY_ATTEMPTS=30
+VERIFY_ATTEMPT=0
+TX_RESPONSE=""
+
+while [ $VERIFY_ATTEMPT -lt $MAX_VERIFY_ATTEMPTS ]; do
+    echo "Attempt $((VERIFY_ATTEMPT+1))/$MAX_VERIFY_ATTEMPTS: Checking transaction status..."
+    
+    TX_RESPONSE=$(curl -s "$ESPLORA_API/tx/$TXID")
+    
+    # Check if response is valid JSON
+    if echo "$TX_RESPONSE" | jq empty 2>/dev/null; then
+        echo "Transaction found and confirmed!"
+        echo "$TX_RESPONSE" | jq
+        break
+    fi
+    
+    VERIFY_ATTEMPT=$((VERIFY_ATTEMPT+1))
+    
+    if [ $VERIFY_ATTEMPT -lt $MAX_VERIFY_ATTEMPTS ]; then
+        sleep 3
+    fi
+done
+
+if [ $VERIFY_ATTEMPT -eq $MAX_VERIFY_ATTEMPTS ]; then
+    echo "Transaction not yet indexed after $MAX_VERIFY_ATTEMPTS attempts."
+    echo "Response from API (not JSON):"
+    echo "$TX_RESPONSE"
+    echo
+    echo "Note: Transaction may still be pending in mempool."
+    echo "Check the explorer link above for current status."
+fi
 
 echo
 echo "=== Contract Lifecycle Complete ==="
