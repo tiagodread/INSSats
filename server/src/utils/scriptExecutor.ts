@@ -21,12 +21,29 @@ export class ScriptExecutor {
   ): Promise<{ stdout: string; stderr: string }> {
     const scriptPath = path.join(this.scriptsDir, scriptName);
     
+    console.log(`[ScriptExecutor] Executing: ${scriptPath}`);
+    console.log(`[ScriptExecutor] Project Root: ${this.projectRoot}`);
+    console.log(`[ScriptExecutor] Scripts Dir: ${this.scriptsDir}`);
+    
+    // Create a clean environment, inheriting from process.env but removing script-specific vars
+    // that might conflict with the script's own defaults
+    const cleanEnv = { ...process.env };
+    
+    // Remove variables that the scripts should define themselves
+    delete cleanEnv.FAUCET_SCRIPT;
+    delete cleanEnv.EXTRACT_TX_SCRIPT;
+    delete cleanEnv.PROGRAM_SOURCE;
+    delete cleanEnv.WITNESS_FILE;
+    delete cleanEnv.INTERNAL_KEY;
+    
     try {
       const { stdout, stderr } = await execAsync(`bash "${scriptPath}"`, {
         env: {
-          ...process.env,
+          ...cleanEnv,
           ...env,
           NO_PAUSE: '1', // Skip interactive pauses
+          PATH: process.env.PATH || '/usr/local/bin:/usr/bin:/bin',
+          HOME: process.env.HOME || '',
         },
         maxBuffer: 1024 * 1024 * 10, // 10MB buffer
         cwd: this.projectRoot,
@@ -34,6 +51,7 @@ export class ScriptExecutor {
 
       return { stdout, stderr };
     } catch (error: any) {
+      console.error(`[ScriptExecutor] Error executing ${scriptName}:`, error.message);
       throw new Error(`Script execution failed: ${error.message}\nStderr: ${error.stderr}`);
     }
   }

@@ -14,6 +14,15 @@ set -euo pipefail
 #   OUTPUT_FILE    - File to save contract info JSON (default: ../tmp/contract-info.json)
 #   NO_PAUSE       - Set to skip interactive pauses (default: unset)
 
+# Error handler
+error_exit() {
+    echo "ERROR: Script failed at line $1" >&2
+    echo "Last command: $BASH_COMMAND" >&2
+    exit 1
+}
+
+trap 'error_exit $LINENO' ERR
+
 pause() {
   if [ -z "${NO_PAUSE:-}" ]; then
     read -p "Press Enter to continue..."
