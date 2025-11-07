@@ -60,9 +60,29 @@ echo
 
 pause
 
-# ===== STEP 1: COMPILE SIMPLICITY PROGRAM =====
-echo "Step 1: Compiling Simplicity program..."
-echo "Command: simc $PROGRAM_SOURCE"
+# ===== STEP 1: GENERATE UNIQUE NONCE =====
+echo "Step 1: Generating unique nonce for contract..."
+
+# Generate a random nonce (0 to 2^32-1)
+NONCE=$((RANDOM * RANDOM))
+echo "Generated nonce: $NONCE"
+echo
+
+# Create a temporary copy of the source file with the nonce replaced
+TEMP_SOURCE=$(mktemp "${TMPDIR:-/tmp}/p2ms_XXXXXX.simf")
+trap "rm -f $TEMP_SOURCE" EXIT
+
+# Replace the nonce value in the source file
+sed "s/let nonce: u256 = [0-9]*;/let nonce: u256 = $NONCE;/" "$PROGRAM_SOURCE" > "$TEMP_SOURCE"
+
+echo "✓ Nonce applied to contract source"
+echo
+
+pause
+
+# ===== STEP 2: COMPILE SIMPLICITY PROGRAM =====
+echo "Step 2: Compiling Simplicity program..."
+echo "Command: simc $TEMP_SOURCE"
 echo
 
 if ! command -v simc &> /dev/null; then
@@ -71,8 +91,8 @@ if ! command -v simc &> /dev/null; then
     exit 1
 fi
 
-# Compile the program
-COMPILED_PROGRAM=$(simc "$PROGRAM_SOURCE" | tail -1)
+# Compile the program with the unique nonce
+COMPILED_PROGRAM=$(simc "$TEMP_SOURCE" | tail -1)
 
 if [ -z "$COMPILED_PROGRAM" ]; then
     echo "ERROR: Failed to compile Simplicity program"
@@ -84,8 +104,8 @@ echo
 
 pause
 
-# ===== STEP 2: EXTRACT PROGRAM INFO =====
-echo "Step 2: Extracting program information..."
+# ===== STEP 3: EXTRACT PROGRAM INFO =====
+echo "Step 3: Extracting program information..."
 echo "Command: hal-simplicity simplicity info $COMPILED_PROGRAM"
 echo
 
@@ -127,8 +147,9 @@ echo
 
 pause
 
-# ===== STEP 3: DISPLAY RESULTS =====
+# ===== STEP 4: DISPLAY RESULTS =====
 echo "=== CONTRACT CREATED ==="
+echo "NONCE = $NONCE"
 echo "CMR = $CMR"
 echo "CONTRACT_ADDRESS = $CONTRACT_ADDRESS"
 echo "BYTECODE = $BYTECODE"
@@ -137,7 +158,7 @@ echo "PROGRAM_SOURCE = $PROGRAM_SOURCE"
 echo "COMPILED_PROGRAM = $COMPILED_PROGRAM"
 echo
 
-# ===== STEP 4: SAVE TO FILE =====
+# ===== STEP 5: SAVE TO FILE =====
 if [ "$OUTPUT_FILE" != "/dev/null" ]; then
     echo "Saving contract information to $OUTPUT_FILE..."
     
@@ -147,6 +168,7 @@ if [ "$OUTPUT_FILE" != "/dev/null" ]; then
     # Create JSON output
     cat > "$OUTPUT_FILE" << EOF
 {
+  "nonce": $NONCE,
   "cmr": "$CMR",
   "contractAddress": "$CONTRACT_ADDRESS",
   "bytecode": "$BYTECODE",

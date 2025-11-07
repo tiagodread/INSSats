@@ -40,6 +40,7 @@ router.post('/create', async (req, res) => {
 
         const response: ContractCreateResponse = {
             contractId,
+            nonce: parseInt(keyValues.NONCE || '0', 10),
             cmr: keyValues.CMR || '',
             contractAddress: keyValues.CONTRACT_ADDRESS || '',
             bytecode: keyValues.BYTECODE || '',

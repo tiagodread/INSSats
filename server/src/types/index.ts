@@ -5,6 +5,7 @@ export interface ContractCreateRequest {
 
 export interface ContractCreateResponse {
   contractId: string;         // Unique identifier for this contract workspace
+  nonce: number;              // Random nonce used to generate unique CMR
   cmr: string;
   contractAddress: string;
   bytecode: string;

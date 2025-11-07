@@ -160,32 +160,41 @@ echo >&2
 
 pause
 
-# ===== STEP 3: RECOMPILE PROGRAM WITH WITNESS =====
-echo "=== Recompiling Simplicity Program with Witness ===" >&2
+# ===== STEP 3: COMPILE WITNESS ONLY =====
+echo "=== Compiling Witness with Signatures ===" >&2
 
+# Compile program with witness to extract the witness data
+# We use the original program source (same as used to generate CMR)
 echo "simc \"$PROGRAM_SOURCE\" \"$TMPDIR/witness.wit\"" >&2
 SIMC_OUTPUT=$(simc "$PROGRAM_SOURCE" "$TMPDIR/witness.wit" 2>&1) || {
-    echo "Error compiling program with witness:" >&2
+    echo "Error compiling witness:" >&2
     echo "$SIMC_OUTPUT" >&2
     exit 1
 }
 
 echo "$SIMC_OUTPUT" > "$TMPDIR/compiled-with-witness"
-echo "$SIMC_OUTPUT" >&2
 
-# Extract PROGRAM and WITNESS from simc output
-# Line 2: PROGRAM (base64)
-# Line 4: WITNESS (hex)
-PROGRAM=$(echo "$SIMC_OUTPUT" | sed -n '2p')
+# Extract WITNESS from simc output (line 4: WITNESS in hex)
 WITNESS=$(echo "$SIMC_OUTPUT" | sed -n '4p')
 
-echo "PROGRAM length: ${#PROGRAM}" >&2
 echo "WITNESS length: ${#WITNESS}" >&2
-echo "PROGRAM (first 50): ${PROGRAM:0:50}..." >&2
 echo "WITNESS (first 50): ${WITNESS:0:50}..." >&2
 
-if [ -z "$PROGRAM" ] || [ -z "$WITNESS" ]; then
-    echo "Error: Failed to extract PROGRAM or WITNESS from simc output" >&2
+if [ -z "$WITNESS" ]; then
+    echo "Error: Failed to extract WITNESS from simc output" >&2
+    exit 1
+fi
+
+# Use the original PROGRAM from contract-info.json (without witness)
+# This ensures the CMR matches what's in the PSET
+PROGRAM=$(jq -r '.compiledProgram' "$CONTRACT_FILE")
+
+echo "Using original PROGRAM from contract (CMR: $CMR)" >&2
+echo "PROGRAM length: ${#PROGRAM}" >&2
+echo "PROGRAM (first 50): ${PROGRAM:0:50}..." >&2
+
+if [ -z "$PROGRAM" ] || [ "$PROGRAM" = "null" ]; then
+    echo "Error: Failed to get original PROGRAM from contract file" >&2
     exit 1
 fi
 
