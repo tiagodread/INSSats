@@ -225,9 +225,10 @@ pause
 # ===== STEP 4: DISPLAY RESULTS =====
 echo "=== FUNDING COMPLETE ===" >&2
 echo "FAUCET_TRANSACTION = $FAUCET_TRANSACTION"
+echo "VOUT = 0"
 echo "SCRIPT_PUBKEY = $SCRIPT_PUBKEY"
 echo "ASSET = $ASSET"
-echo "VALUE = $VALUE BTC ($VALUE_SATS satoshis)" >&2
+echo "VALUE = $VALUE"
 echo "VALUE_SATS = $VALUE_SATS"
 echo >&2
 

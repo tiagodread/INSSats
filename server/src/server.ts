@@ -2,6 +2,7 @@ import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
 import contractRoutes from './routes/contract';
+import keysRoutes from './routes/keys';
 
 dotenv.config();
 
@@ -21,6 +22,7 @@ app.use((req, res, next) => {
 
 // Routes
 app.use('/contract', contractRoutes);
+app.use('/keys', keysRoutes);
 
 // Health check
 app.get('/health', (req, res) => {
@@ -40,9 +42,13 @@ app.get('/', (req, res) => {
       'POST /contract/create': 'Create a new Simplicity contract',
       'POST /contract/fund': 'Fund a contract address',
       'POST /contract/pset/create': 'Create a minimal PSET',
+      'PATCH /contract/pset/update': 'Update PSET with contract info',
+      'PATCH /contract/pset/attach-signature': 'Attach a signature to PSET',
       'POST /contract/pset/finalize': 'Finalize PSET with signatures',
       'POST /contract/broadcast': 'Broadcast transaction to network',
       'GET /contract/transaction/:txid': 'Query transaction status',
+      'GET /keys/users': 'List all users with their public keys',
+      'GET /keys/users/:userId': 'Get user public key info',
       'GET /health': 'Health check endpoint',
     }
   });

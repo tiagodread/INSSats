@@ -1,33 +1,45 @@
-import { Router } from 'express';
+import express from 'express';
 import { ScriptExecutor } from '../utils/scriptExecutor';
-import type {
-    ContractCreateRequest,
-    ContractCreateResponse,
-    ContractFundRequest,
-    ContractFundResponse,
-    PsetCreateRequest,
-    PsetCreateResponse,
+import { ContractWorkspace } from '../utils/contractWorkspace';
+import { readFileSync, writeFileSync } from 'fs';
+import { 
+    ContractCreateRequest, 
+    ContractCreateResponse, 
+    ContractFundRequest, 
+    ContractFundResponse, 
+    PsetCreateRequest, 
+    PsetCreateResponse, 
+    PsetUpdateRequest, 
+    PsetUpdateResponse, 
+    AttachSignatureRequest, 
+    AttachSignatureResponse,
     PsetFinalizeRequest,
     PsetFinalizeResponse,
     TransactionBroadcastRequest,
     TransactionBroadcastResponse,
-    TransactionQueryResponse,
 } from '../types';
 
-const router = Router();
+const router = express.Router();
 const executor = new ScriptExecutor();
 
 // POST /contract/create
 router.post('/create', async (req, res) => {
     try {
+        // Generate unique contract ID and workspace
+        const contractId = ContractWorkspace.generateContractId();
+        const workspaceDir = ContractWorkspace.getWorkspaceDir(contractId);
+
+        console.log(`[${contractId}] Creating new contract workspace at ${workspaceDir}`);
+
         const env: Record<string, string> = {
-            OUTPUT_FILE: '/dev/null',
+            OUTPUT_FILE: ContractWorkspace.getFilePath(contractId, 'contract-info.json'),
         };
 
         const { stdout } = await executor.executeScript('1-create-contract.sh', env);
         const keyValues = executor.extractKeyValuePairs(stdout);
 
         const response: ContractCreateResponse = {
+            contractId,
             cmr: keyValues.CMR || '',
             contractAddress: keyValues.CONTRACT_ADDRESS || '',
             bytecode: keyValues.BYTECODE || '',
@@ -36,6 +48,7 @@ router.post('/create', async (req, res) => {
             compiledProgram: keyValues.COMPILED_PROGRAM || '',
         };
 
+        console.log(`[${contractId}] Contract created: ${response.contractAddress}`);
         res.json(response);
     } catch (error: any) {
         console.error('Contract creation error:', error);
@@ -51,33 +64,43 @@ router.post('/fund', async (req, res) => {
     try {
         const params: ContractFundRequest = req.body;
 
+        if (!params.contractId) {
+            return res.status(400).json({ error: 'contractId is required' });
+        }
+
+        if (!ContractWorkspace.exists(params.contractId)) {
+            return res.status(404).json({ error: 'Contract workspace not found' });
+        }
+
         if (!params.contractAddress) {
             return res.status(400).json({ error: 'contractAddress is required' });
         }
 
-        // Create temporary contract-info file
-        const tmpContractInfo = {
-            contractAddress: params.contractAddress,
-        };
+        console.log(`[${params.contractId}] Funding contract at ${params.contractAddress}`);
 
         const env: Record<string, string> = {
-            CONTRACT_ADDRESS_OVERRIDE: params.contractAddress,
-            OUTPUT_FILE: '/dev/null',
+            CONTRACT_ADDRESS: params.contractAddress,
+            OUTPUT_FILE: ContractWorkspace.getFilePath(params.contractId, 'funding-info.json'),
         };
 
-        const { stdout } = await executor.executeScript('2-fund-contract.sh', env);
+        if (params.amount) {
+            env.AMOUNT = params.amount.toString();
+        }
 
+        const { stdout } = await executor.executeScript('2-fund-contract.sh', env);
         const keyValues = executor.extractKeyValuePairs(stdout);
 
         const response: ContractFundResponse = {
+            contractId: params.contractId,
             txid: keyValues.FAUCET_TRANSACTION || '',
-            vout: 0,
+            vout: parseInt(keyValues.VOUT || '0', 10),
             scriptPubkey: keyValues.SCRIPT_PUBKEY || '',
             asset: keyValues.ASSET || '',
-            value: keyValues.VALUE || '',
-            valueSats: parseInt(keyValues.VALUE_SATS || '0'),
+            value: parseFloat(keyValues.VALUE || '0'),
+            valueSats: parseInt(keyValues.VALUE_SATS || '0', 10),
         };
 
+        console.log(`[${params.contractId}] Funded with txid: ${response.txid}`);
         res.json(response);
     } catch (error: any) {
         console.error('Contract funding error:', error);
@@ -93,30 +116,44 @@ router.post('/pset/create', async (req, res) => {
     try {
         const params: PsetCreateRequest = req.body;
 
-        if (!params.txid) {
-            return res.status(400).json({ error: 'txid is required' });
+        if (!params.contractId) {
+            return res.status(400).json({ error: 'contractId is required' });
         }
 
+        if (!ContractWorkspace.exists(params.contractId)) {
+            return res.status(404).json({ error: 'Contract workspace not found' });
+        }
+
+        if (!params.recipientAddress) {
+            return res.status(400).json({ error: 'recipientAddress is required' });
+        }
+
+        console.log(`[${params.contractId}] Creating PSET for recipient: ${params.recipientAddress}`);
+
         const env: Record<string, string> = {
-            FUNDING_TXID_OVERRIDE: params.txid,
-            OUTPUT_FILE: '/dev/null',
+            RECIPIENT_ADDRESS: params.recipientAddress,
+            FUNDING_INFO_FILE: ContractWorkspace.getFilePath(params.contractId, 'funding-info.json'),
+            OUTPUT_FILE: ContractWorkspace.getFilePath(params.contractId, 'pset-info.json'),
         };
 
-        if (params.recipientAddress) env.RECIPIENT_ADDRESS = params.recipientAddress;
-        if (params.amount) env.CONTRACT_AMOUNT = params.amount;
-        if (params.fee) env.CONTRACT_FEE = params.fee;
+        if (params.amount) {
+            env.AMOUNT_OVERRIDE = params.amount.toString();
+        }
+
+        if (params.feeAmount) {
+            env.FEE_AMOUNT = params.feeAmount.toString();
+        }
 
         const { stdout } = await executor.executeScript('3-create-pset.sh', env);
-
         const keyValues = executor.extractKeyValuePairs(stdout);
 
         const response: PsetCreateResponse = {
+            contractId: params.contractId,
             pset: keyValues.PSET || '',
-            recipientAddress: keyValues.RECIPIENT_ADDRESS || params.recipientAddress || '',
-            amount: params.amount || '0.00099900',
-            fee: params.fee || '0.00000100',
+            recipientAddress: keyValues.RECIPIENT_ADDRESS || params.recipientAddress,
         };
 
+        console.log(`[${params.contractId}] PSET created`);
         res.json(response);
     } catch (error: any) {
         console.error('PSET creation error:', error);
@@ -127,41 +164,152 @@ router.post('/pset/create', async (req, res) => {
     }
 });
 
+// PATCH /contract/pset/update
+router.patch('/pset/update', async (req, res) => {
+    try {
+        const params: PsetUpdateRequest = req.body;
+
+        if (!params.contractId) {
+            return res.status(400).json({ error: 'contractId is required' });
+        }
+
+        if (!ContractWorkspace.exists(params.contractId)) {
+            return res.status(404).json({ error: 'Contract workspace not found' });
+        }
+
+        console.log(`[${params.contractId}] Updating PSET with contract info`);
+
+        const env: Record<string, string> = {
+            PSET_INFO_FILE: ContractWorkspace.getFilePath(params.contractId, 'pset-info.json'),
+            CONTRACT_INFO_FILE: ContractWorkspace.getFilePath(params.contractId, 'contract-info.json'),
+            FUNDING_INFO_FILE: ContractWorkspace.getFilePath(params.contractId, 'funding-info.json'),
+            OUTPUT_FILE: ContractWorkspace.getFilePath(params.contractId, 'updated-pset-info.json'),
+        };
+
+        // Optional overrides
+        if (params.scriptPubkey) env.SCRIPT_PUBKEY_OVERRIDE = params.scriptPubkey;
+        if (params.asset) env.ASSET_OVERRIDE = params.asset;
+        if (params.value) env.VALUE_OVERRIDE = params.value.toString();
+        if (params.cmr) env.CMR_OVERRIDE = params.cmr;
+        if (params.internalKey) env.INTERNAL_KEY_OVERRIDE = params.internalKey;
+
+        const { stdout } = await executor.executeScript('4-update-pset.sh', env);
+        const keyValues = executor.extractKeyValuePairs(stdout);
+
+        const response: PsetUpdateResponse = {
+            contractId: params.contractId,
+            pset: keyValues.PSET || '',
+        };
+
+        console.log(`[${params.contractId}] PSET updated with contract info`);
+        res.json(response);
+    } catch (error: any) {
+        console.error('PSET update error:', error);
+        res.status(500).json({
+            error: 'Failed to update PSET',
+            details: error.message
+        });
+    }
+});
+
+// PATCH /contract/pset/attach-signature
+router.patch('/pset/attach-signature', async (req, res) => {
+    try {
+        const params: AttachSignatureRequest = req.body;
+
+        if (!params.contractId) {
+            return res.status(400).json({ error: 'contractId is required' });
+        }
+
+        if (!ContractWorkspace.exists(params.contractId)) {
+            return res.status(404).json({ error: 'Contract workspace not found' });
+        }
+
+        if (!params.userId) {
+            return res.status(400).json({ error: 'userId is required' });
+        }
+
+        console.log(`[${params.contractId}] User ${params.userId} confirming participation`);
+
+        const participantsFile = ContractWorkspace.getFilePath(params.contractId, 'participants-info.json');
+
+        // Load or initialize participants
+        let participantsData: any = { participants: [] };
+        try {
+            const fileContent = readFileSync(participantsFile, 'utf-8');
+            participantsData = JSON.parse(fileContent);
+        } catch (error) {
+            // File doesn't exist yet, use defaults
+        }
+
+        // Add userId if not already present
+        if (!participantsData.participants.includes(params.userId)) {
+            participantsData.participants.push(params.userId);
+        }
+
+        // Save updated participants
+        writeFileSync(participantsFile, JSON.stringify(participantsData, null, 2));
+
+        const response: AttachSignatureResponse = {
+            contractId: params.contractId,
+            userId: params.userId,
+            signatureIndex: 0, // Not used in current implementation
+            participantsCount: participantsData.participants.length,
+            thresholdMet: participantsData.participants.length >= 2,
+            participants: participantsData.participants,
+        };
+
+        console.log(`[${params.contractId}] Participants: ${participantsData.participants.join(', ')}`);
+        res.json(response);
+    } catch (error: any) {
+        console.error('Attach signature error:', error);
+        res.status(500).json({
+            error: 'Failed to attach signature',
+            details: error.message
+        });
+    }
+});
+
 // POST /contract/pset/finalize
 router.post('/pset/finalize', async (req, res) => {
     try {
         const params: PsetFinalizeRequest = req.body;
 
-        const required = ['pset', 'scriptPubkey', 'asset', 'value'];
-        for (const field of required) {
-            if (!(params as any)[field]) {
-                return res.status(400).json({ error: `${field} is required` });
-            }
+        if (!params.contractId) {
+            return res.status(400).json({ error: 'contractId is required' });
         }
 
+        if (!ContractWorkspace.exists(params.contractId)) {
+            return res.status(404).json({ error: 'Contract workspace not found' });
+        }
+
+        console.log(`[${params.contractId}] Finalizing PSET`);
+
         const env: Record<string, string> = {
-            PSET_OVERRIDE: params.pset,
-            SCRIPT_PUBKEY_OVERRIDE: params.scriptPubkey,
-            ASSET_OVERRIDE: params.asset,
-            VALUE_OVERRIDE: params.value,
-            OUTPUT_FILE: '/dev/null',
+            UPDATED_PSET_FILE: ContractWorkspace.getFilePath(params.contractId, 'updated-pset-info.json'),
+            CONTRACT_FILE: ContractWorkspace.getFilePath(params.contractId, 'contract-info.json'),
+            PARTICIPANTS_FILE: ContractWorkspace.getFilePath(params.contractId, 'participants-info.json'),
+            OUTPUT_FILE: ContractWorkspace.getFilePath(params.contractId, 'finalized-pset-info.json'),
         };
 
-        // CMR and other contract-specific params are optional - script will use defaults if not provided
+        // Optional overrides
+        if (params.pset) env.PSET_OVERRIDE = params.pset;
         if (params.cmr) env.CMR_OVERRIDE = params.cmr;
-        if (params.privateKey) env.PRIVKEY_1 = params.privateKey;
-        if (params.witnessFile) env.WITNESS_FILE = params.witnessFile;
+        if (params.internalKey) env.INTERNAL_KEY_OVERRIDE = params.internalKey;
+        if (params.programSource) env.PROGRAM_SOURCE_OVERRIDE = params.programSource;
+        if (params.witnessFile) env.WITNESS_FILE_OVERRIDE = params.witnessFile;
 
-        const { stdout } = await executor.executeScript('4-finalize-pset.sh', env);
-
+        const { stdout } = await executor.executeScript('6-finalize-pset.sh', env);
         const keyValues = executor.extractKeyValuePairs(stdout);
 
         const response: PsetFinalizeResponse = {
+            contractId: params.contractId,
             pset: keyValues.PSET || '',
             rawTx: keyValues.RAW_TX || '',
-            signature: keyValues.SIGNATURE_1 || '',
+            finalized: keyValues.FINALIZED === 'true',
         };
 
+        console.log(`[${params.contractId}] PSET finalized, ready to broadcast`);
         res.json(response);
     } catch (error: any) {
         console.error('PSET finalization error:', error);
@@ -177,86 +325,42 @@ router.post('/broadcast', async (req, res) => {
     try {
         const params: TransactionBroadcastRequest = req.body;
 
-        if (!params.rawTx) {
-            return res.status(400).json({ error: 'rawTx is required' });
+        if (!params.contractId) {
+            return res.status(400).json({ error: 'contractId is required' });
         }
 
+        if (!ContractWorkspace.exists(params.contractId)) {
+            return res.status(404).json({ error: 'Contract workspace not found' });
+        }
+
+        console.log(`[${params.contractId}] Broadcasting transaction`);
+
         const env: Record<string, string> = {
-            RAW_TX_OVERRIDE: params.rawTx,
-            OUTPUT_FILE: '/dev/null',
+            FINALIZED_PSET_FILE: ContractWorkspace.getFilePath(params.contractId, 'finalized-pset-info.json'),
+            OUTPUT_FILE: ContractWorkspace.getFilePath(params.contractId, 'broadcast-info.json'),
         };
 
-        const { stdout } = await executor.executeScript('5-broadcast-transaction.sh', env);
+        // Optional override
+        if (params.rawTx) {
+            env.RAW_TX_OVERRIDE = params.rawTx;
+        }
 
+        const { stdout } = await executor.executeScript('7-broadcast-transaction.sh', env);
         const keyValues = executor.extractKeyValuePairs(stdout);
 
         const response: TransactionBroadcastResponse = {
+            contractId: params.contractId,
             txid: keyValues.TXID || '',
-            status: keyValues.STATUS === 'confirmed' ? 'confirmed' : 'pending',
-            explorerUrl: `https://blockstream.info/liquidtestnet/tx/${keyValues.TXID}?expand`,
+            status: (keyValues.STATUS as 'pending' | 'confirmed') || 'pending',
+            explorerUrl: keyValues.EXPLORER_URL || '',
         };
 
+        console.log(`[${params.contractId}] Transaction broadcast: ${response.txid}`);
         res.json(response);
     } catch (error: any) {
         console.error('Transaction broadcast error:', error);
         res.status(500).json({
             error: 'Failed to broadcast transaction',
-            details: error.message
-        });
-    }
-});
-
-// GET /contract/transaction/:txid
-router.get('/transaction/:txid', async (req, res) => {
-    try {
-        const { txid } = req.params;
-
-        if (!txid) {
-            return res.status(400).json({ error: 'txid is required' });
-        }
-
-        const env: Record<string, string> = {
-            TXID: txid,
-        };
-
-        const { stdout } = await executor.executeScript('6-query-transaction.sh', env);
-
-        // Try to extract JSON from output
-        const lines = stdout.split('\n');
-        let transactionData = null;
-        let statusData = null;
-
-        for (const line of lines) {
-            const trimmed = line.trim();
-            if (trimmed.startsWith('{') && trimmed.includes('txid')) {
-                try {
-                    const parsed = JSON.parse(trimmed);
-                    if (parsed.vin || parsed.vout) {
-                        transactionData = parsed;
-                    } else if (parsed.confirmed !== undefined) {
-                        statusData = parsed;
-                    }
-                } catch {
-                    continue;
-                }
-            }
-        }
-
-        const response: TransactionQueryResponse = {
-            txid,
-            transaction: transactionData,
-            status: statusData,
-            confirmed: statusData?.confirmed || false,
-            blockHeight: statusData?.block_height,
-            blockTime: statusData?.block_time,
-            explorerUrl: `https://blockstream.info/liquidtestnet/tx/${txid}?expand`,
-        };
-
-        res.json(response);
-    } catch (error: any) {
-        console.error('Transaction query error:', error);
-        res.status(500).json({
-            error: 'Failed to query transaction',
             details: error.message
         });
     }

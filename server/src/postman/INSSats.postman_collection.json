@@ -1,0 +1,133 @@
+{
+	"info": {
+		"_postman_id": "d0d2750b-ea3d-42da-8e26-fabd747ae810",
+		"name": "INSSats",
+		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+		"_exporter_id": "49271979",
+		"_collection_link": "https://tgoes-b5d6ccbf-3158187.postman.co/workspace/Tiago-Silva's-Workspace~982c80c2-e607-406b-832c-1ddc67ce2791/collection/49271979-d0d2750b-ea3d-42da-8e26-fabd747ae810?action=share&source=collection_link&creator=49271979"
+	},
+	"item": [
+		{
+			"name": "health",
+			"request": {
+				"auth": {
+					"type": "noauth"
+				},
+				"method": "GET",
+				"header": [],
+				"url": {
+					"raw": "localhost:3001/health",
+					"host": [
+						"localhost"
+					],
+					"port": "3001",
+					"path": [
+						"health"
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "1 - create contract",
+			"event": [
+				{
+					"listen": "test",
+					"script": {
+						"exec": [
+							"let response = pm.response.json();",
+							"",
+							"// Verifica se o campo contractId existe",
+							"if (response.contractId) {",
+							"    // Salva como variável da collection",
+							"    pm.collectionVariables.set(\"contractId\", response.contractId);",
+							"    console.log(\"✅ contractId salvo:\", response.contractId);",
+							"} else {",
+							"    console.warn(\"⚠️ Nenhum contractId encontrado na resposta.\");",
+							"}"
+						],
+						"type": "text/javascript",
+						"packages": {},
+						"requests": {}
+					}
+				}
+			],
+			"request": {
+				"method": "POST",
+				"header": [],
+				"url": {
+					"raw": "localhost:3001/contract/create",
+					"host": [
+						"localhost"
+					],
+					"port": "3001",
+					"path": [
+						"contract",
+						"create"
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "4 - update pset",
+			"request": {
+				"method": "PATCH",
+				"header": [],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n    \"contractId\": \"{{contractId}}\",\n    \"pset\": \"cHNldP8BAgQCAAAAAQMEAAAAAAEEAQEBBQECAfsEAgAAAAABDiAc4V2RQhcvmIMQq7OynxLupnDSsH1Ydnh0oqaCnXR/NAEPBAAAAAABEAT/////AAEDCDyGAQAAAAAAAQQWABTcXPozwdad4u6IZR9vac3qEO73Qwf8BHBzZXQCIEmagYVF9rrjn8A7Y38qTh5k5ZDKwbw6b21xqkRDZUwUAAEDCGQAAAAAAAAAAQQAB/wEcHNldAIgSZqBhUX2uuOfwDtjfypOHmTlkMrBvDpvbXGqRENlTBQA\",\n    \"scriptPubkey\": \"51203f612c1cfed344cf186177864da48898dab62fe8da72d55975bbabb039c435f6\",\n    \"asset\": \"144c654344aa716d6f3abcc1ca90e5641e4e2a7f633bc09fe3baf64585819a49\",\n    \"value\": \".00100000\",\n    \"cmr\": \"af5b897effb80a06fa19362347b7807dc0e774eaf4271d6526545965b44ddc3e\",\n    \"internalKey\": \"50929b74c1a04954b78b4b6035e97a5e078a5a0f28ec96d547bfee9ace803ac0\"\n}",
+					"options": {
+						"raw": {
+							"language": "json"
+						}
+					}
+				},
+				"url": {
+					"raw": "localhost:3001/contract/pset/update",
+					"host": [
+						"localhost"
+					],
+					"port": "3001",
+					"path": [
+						"contract",
+						"pset",
+						"update"
+					]
+				}
+			},
+			"response": []
+		}
+	],
+	"event": [
+		{
+			"listen": "prerequest",
+			"script": {
+				"type": "text/javascript",
+				"packages": {},
+				"requests": {},
+				"exec": [
+					""
+				]
+			}
+		},
+		{
+			"listen": "test",
+			"script": {
+				"type": "text/javascript",
+				"packages": {},
+				"requests": {},
+				"exec": [
+					""
+				]
+			}
+		}
+	],
+	"variable": [
+		{
+			"key": "contractId",
+			"value": "",
+			"type": "default"
+		}
+	]
+}

@@ -4,6 +4,7 @@ export interface ContractCreateRequest {
 }
 
 export interface ContractCreateResponse {
+  contractId: string;         // Unique identifier for this contract workspace
   cmr: string;
   contractAddress: string;
   bytecode: string;
@@ -12,58 +13,93 @@ export interface ContractCreateResponse {
   compiledProgram: string;
 }
 
+// Contract Funding
 export interface ContractFundRequest {
-  contractAddress: string;
+    contractId: string;         // Required - identifies the contract workspace
+    contractAddress: string;
+    amount?: number;            // Optional - defaults to 100000 sats
 }
 
 export interface ContractFundResponse {
-  txid: string;
-  vout: number;
-  scriptPubkey: string;
-  asset: string;
-  value: string;
-  valueSats: number;
-}
-
+    contractId: string;
+    txid: string;
+    vout: number;
+    scriptPubkey: string;
+    asset: string;
+    value: number;
+    valueSats: number;
+}// PSET Creation
 export interface PsetCreateRequest {
-  txid: string;
-  recipientAddress?: string;
-  amount?: string;
-  fee?: string;
+    contractId: string;         // Required - identifies the contract workspace
+    recipientAddress: string;
+    amount?: number;            // Optional - defaults to value from funding minus fee
+    feeAmount?: number;         // Optional - defaults to 100 sats
 }
 
 export interface PsetCreateResponse {
-  pset: string;
-  recipientAddress: string;
-  amount: string;
-  fee: string;
+    contractId: string;
+    pset: string;
+    recipientAddress: string;
 }
 
+// PSET Update
+export interface PsetUpdateRequest {
+    contractId: string;         // Required - identifies the contract workspace
+    scriptPubkey?: string;      // Optional - loads from funding-info.json
+    asset?: string;             // Optional - loads from funding-info.json
+    value?: number;             // Optional - loads from funding-info.json
+    cmr?: string;               // Optional - loads from contract-info.json
+    internalKey?: string;       // Optional - loads from contract-info.json
+}
+
+export interface PsetUpdateResponse {
+    contractId: string;
+    pset: string;               // Updated PSET with contract info
+}
+
+// Attach Signature to PSET (Confirm Participation)
+export interface AttachSignatureRequest {
+    contractId: string;         // Required - identifies the contract workspace
+    userId: string;             // User identifier (confirms participation)
+}
+
+export interface AttachSignatureResponse {
+    contractId: string;
+    userId: string;
+    signatureIndex: number;
+    participantsCount: number;
+    thresholdMet: boolean;      // true when >= 2 participants
+    participants: string[];     // Array of user IDs that confirmed
+}
+
+// PSET Finalization
 export interface PsetFinalizeRequest {
-  pset: string;
-  scriptPubkey: string;
-  asset: string;
-  value: string;
-  cmr?: string;              // Optional - server will use default if not provided
-  privateKey?: string;
-  witnessFile?: string;
+    contractId: string;         // Required - identifies the contract workspace
+    pset?: string;              // Optional - loads from updated-pset-info.json
+    cmr?: string;               // Optional - loads from contract-info.json
+    internalKey?: string;       // Optional - loads from contract-info.json
+    programSource?: string;     // Optional - defaults to p2ms.simf
+    witnessFile?: string;       // Optional - defaults to p2ms.wit
 }
 
 export interface PsetFinalizeResponse {
-  pset: string;
-  rawTx: string;
-  signature: string;
+    contractId: string;
+    pset: string;               // Finalized PSET
+    rawTx: string;              // Extracted raw transaction
+    finalized: boolean;
 }
 
+// Broadcast Transaction
 export interface TransactionBroadcastRequest {
-  rawTx: string;
+    contractId: string;         // Required - identifies the contract workspace
+    rawTx?: string;             // Optional - uses from finalized-pset-info.json
 }
 
 export interface TransactionBroadcastResponse {
-  txid: string;
-  status: 'pending' | 'confirmed';
-  explorerUrl: string;
-  transaction?: any;
+    contractId: string;
+    txid: string;
+    status: 'pending' | 'confirmed';
+    explorerUrl: string;
 }
 
 export interface TransactionQueryResponse {
