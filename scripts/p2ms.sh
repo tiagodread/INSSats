@@ -1,0 +1,355 @@
+#!/bin/bash
+set -euo pipefail
+
+pause() {
+  if [ -z "${NO_PAUSE:-}" ]; then
+    read -p "Press Enter to continue..."
+    echo
+    echo
+  fi
+}
+
+# Get the directory where the script is located and the project root
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+# Use Esplora API instead of local elementsd
+ESPLORA_API="${ESPLORA_API:-https://blockstream.info/liquidtestnet/api}"
+
+# Set the infra directory for docker commands
+INFRA_DIR="${INFRA_DIR:-$PROJECT_ROOT/infra}"
+
+# Accept parameters from environment or use defaults
+PROGRAM_SOURCE="${PROGRAM_SOURCE:-$PROJECT_ROOT/contracts/p2ms.simf}"
+WITNESS_FILE="${WITNESS_FILE:-$PROJECT_ROOT/contracts/p2ms.wit}"
+
+# External scripts for faucet operations (can be overridden via environment variables)
+FAUCET_SCRIPT="${FAUCET_SCRIPT:-$HOME/faucet.sh}"
+EXTRACT_TX_SCRIPT="${EXTRACT_TX_SCRIPT:-$HOME/extract-transaction.sh}"
+
+# This is an unspendable public key address.
+# It is semi-hardcoded in some Simplicity tools. You can change it in order
+# to make existing contract source code have a different address on the
+# blockchain (I think) but you must use a NUMS method to make sure that
+# the key is unspendable. If someone else offers you a contract, you must
+# make sure that the internal key used for that instance of the contract
+# is an unspendable value (if it is changed from this default). Otherwise
+# the contract creator may be able to unilaterally steal value from
+# the contract.
+INTERNAL_KEY="${INTERNAL_KEY:-50929b74c1a04954b78b4b6035e97a5e078a5a0f28ec96d547bfee9ace803ac0}"
+TMPDIR=$(mktemp -d)
+
+PRIVKEY_1="${PRIVKEY_1:-0000000000000000000000000000000000000000000000000000000000000001}"
+PRIVKEY_3="${PRIVKEY_3:-0000000000000000000000000000000000000000000000000000000000000003}"
+
+# Hardcoded address of the Liquid testnet for returning tLBTC
+# (so that they aren't wasted!)
+# We could also send these to our own wallet, but here we are choosing
+# to send them back.
+RECIPIENT_ADDRESS="${RECIPIENT_ADDRESS:-tlq1qq2g07nju42l0nlx0erqa3wsel2l8prnq96rlnhml262mcj7pe8w6ndvvyg237japt83z24m8gu4v3yfhaqvrqxydadc9scsmw}"
+CONTRACT_AMOUNT="${CONTRACT_AMOUNT:-0.00099900}"
+CONTRACT_FEE="${CONTRACT_FEE:-0.00000100}"
+
+# Get unconfidential address (will use elements-cli if available, otherwise use as-is)
+if command -v docker &> /dev/null; then
+    # Test if docker compose and elementsd1 are available
+    if (cd "$INFRA_DIR" && docker compose ps elementsd1 2>&1 | grep -q elementsd1); then
+        ELEMENTS_CLI="docker compose -f $INFRA_DIR/docker-compose.yml exec -T elementsd1 elements-cli"
+        RECIPIENT_ADDRESS=$($ELEMENTS_CLI validateaddress "$RECIPIENT_ADDRESS" 2>/dev/null | jq -r .unconfidential || echo "$RECIPIENT_ADDRESS")
+    fi
+fi
+
+for variable in PROGRAM_SOURCE WITNESS_FILE INTERNAL_KEY PRIVKEY_1 PRIVKEY_3 RECIPIENT_ADDRESS CONTRACT_AMOUNT CONTRACT_FEE
+do
+    echo -n "$variable = "
+    eval echo \$$variable
+done
+
+pause
+
+# ===== STEP 1: CREATE CONTRACT =====
+echo "=== Creating Contract ==="
+echo "Compiling Simplicity program..."
+echo "simc $PROGRAM_SOURCE"
+simc $PROGRAM_SOURCE
+
+pause
+
+# Extract the compiled program from the output of that command
+COMPILED_PROGRAM=$(simc "$PROGRAM_SOURCE" | tail -1)
+
+echo "Getting program info..."
+echo "hal-simplicity simplicity info $COMPILED_PROGRAM"
+hal-simplicity simplicity info $COMPILED_PROGRAM | jq
+BYTECODE=$(hal-simplicity simplicity info "$COMPILED_PROGRAM" | jq -r .commit_decode)
+CMR=$(hal-simplicity simplicity info "$COMPILED_PROGRAM" | jq -r .cmr)
+CONTRACT_ADDRESS=$(hal-simplicity simplicity info "$COMPILED_PROGRAM" | jq -r .liquid_testnet_address_unconf)
+echo
+
+for variable in CMR CONTRACT_ADDRESS
+do
+    echo -n "$variable = "
+    eval echo \$$variable
+done
+
+pause
+
+# ===== STEP 2: FUND CONTRACT =====
+echo "=== Funding Contract ==="
+
+# Here we use a curl command to contact the Liquid Testnet faucet to
+# ask it to fund our contract
+echo "Requesting funds from faucet for address: $CONTRACT_ADDRESS"
+echo "Running curl to connect to Liquid Testnet faucet..."
+FAUCET_TRANSACTION=$(bash "$FAUCET_SCRIPT" "$CONTRACT_ADDRESS" | bash "$EXTRACT_TX_SCRIPT")
+
+echo "FAUCET_TRANSACTION = $FAUCET_TRANSACTION"
+
+pause
+
+# ===== STEP 3: WAIT FOR CONFIRMATION =====
+echo "=== Waiting for Transaction to be Available ==="
+echo "Checking transaction via Esplora API..."
+
+# Wait for transaction to appear in mempool or blockchain
+MAX_ATTEMPTS=60
+ATTEMPT=0
+while [ $ATTEMPT -lt $MAX_ATTEMPTS ]; do
+    echo "Attempt $((ATTEMPT+1))/$MAX_ATTEMPTS: Checking if transaction is available..."
+    
+    TX_DATA=$(curl -s "$ESPLORA_API/tx/$FAUCET_TRANSACTION")
+    
+    if [ -n "$TX_DATA" ] && [ "$TX_DATA" != "Transaction not found" ]; then
+        echo "Transaction found!"
+        echo "$TX_DATA" | jq > "$TMPDIR/faucet-tx-full.json"
+        break
+    fi
+    
+    ATTEMPT=$((ATTEMPT+1))
+    sleep 5
+done
+
+if [ $ATTEMPT -eq $MAX_ATTEMPTS ]; then
+    echo "ERROR: Transaction not found after $MAX_ATTEMPTS attempts"
+    exit 1
+fi
+
+pause
+
+# ===== STEP 4: GET UTXO DETAILS =====
+echo "=== Getting UTXO Details ==="
+
+# Get the output details for vout 0
+VOUT_0=$(cat "$TMPDIR/faucet-tx-full.json" | jq '.vout[0]')
+echo "$VOUT_0" | jq
+
+# Extract scriptPubKey (hex), asset, and value
+SCRIPT_PUBKEY=$(echo "$VOUT_0" | jq -r '.scriptpubkey')
+ASSET=$(echo "$VOUT_0" | jq -r '.asset')
+VALUE_SATS=$(echo "$VOUT_0" | jq -r '.value')
+
+# Convert value from satoshis to BTC
+VALUE=$(echo "scale=8; $VALUE_SATS / 100000000" | bc)
+
+echo "Extracted parameters:"
+echo "  SCRIPT_PUBKEY = $SCRIPT_PUBKEY"
+echo "  ASSET = $ASSET"
+echo "  VALUE = $VALUE BTC ($VALUE_SATS satoshis)"
+
+pause
+
+# ===== STEP 5: CREATE PSET =====
+echo "=== Creating PSET ==="
+
+# Check if we have access to elements-cli via docker
+if command -v docker &> /dev/null; then
+    if (cd "$INFRA_DIR" && docker compose ps elementsd1 2>&1 | grep -q elementsd1); then
+        echo "Using local elements-cli for PSET creation..."
+        ELEMENTS_CLI="docker compose -f $INFRA_DIR/docker-compose.yml exec -T elementsd1 elements-cli"
+        
+        # Create PSET
+        echo "$ELEMENTS_CLI createpsbt \"[ { \\\"txid\\\": \\\"$FAUCET_TRANSACTION\\\", \\\"vout\\\": 0 } ]\" \"[ { \\\"$RECIPIENT_ADDRESS\\\": $CONTRACT_AMOUNT }, { \\\"fee\\\": $CONTRACT_FEE } ]\""
+        PSET=$($ELEMENTS_CLI createpsbt \
+            "[{\"txid\":\"$FAUCET_TRANSACTION\",\"vout\":0}]" \
+            "[{\"$RECIPIENT_ADDRESS\":$CONTRACT_AMOUNT},{\"fee\":$CONTRACT_FEE}]")
+        
+        echo "PSET created: $PSET"
+    else
+        echo "ERROR: Docker container elementsd1 is not running"
+        echo "Please start it from the infra directory:"
+        echo "  cd $INFRA_DIR && docker compose up -d elementsd1"
+        exit 1
+    fi
+else
+    echo "ERROR: Docker not available for PSET creation"
+    echo "You need either:"
+    echo "  1. Docker with elementsd1 running, OR"
+    echo "  2. Local elements-cli installation"
+    exit 1
+fi
+
+pause
+
+pause
+
+# ===== STEP 6: UPDATE PSET INPUT =====
+echo "=== Updating PSET Input ==="
+
+echo "Using extracted parameters: $SCRIPT_PUBKEY:$ASSET:$VALUE"
+
+pause
+
+echo "hal-simplicity simplicity pset update-input \"$PSET\" 0 -i \"$SCRIPT_PUBKEY:$ASSET:$VALUE\" -c \"$CMR\" -p \"$INTERNAL_KEY\""
+hal-simplicity simplicity pset update-input "$PSET" 0 -i "$SCRIPT_PUBKEY:$ASSET:$VALUE" -c "$CMR" -p "$INTERNAL_KEY" | tee "$TMPDIR/updated.json" | jq
+
+PSET=$(jq -r .pset < "$TMPDIR/updated.json")
+
+pause
+
+# ===== STEP 7: GENERATE SIGNATURES =====
+echo "=== Generating Signatures ==="
+
+# Signature 1
+echo "Signing on behalf of Alice using private key $PRIVKEY_1"
+echo "hal-simplicity simplicity sighash \"$PSET\" 0 \"$CMR\" -x \"$PRIVKEY_1\""
+hal-simplicity simplicity sighash "$PSET" 0 "$CMR" -x "$PRIVKEY_1" | jq
+SIGNATURE_1=$(hal-simplicity simplicity sighash "$PSET" 0 "$CMR" -x "$PRIVKEY_1" | jq -r .signature)
+echo "Alice's signature is $SIGNATURE_1 (different from JSON due to signing nonce)"
+
+pause
+
+# Signature 3
+echo "Signing on behalf of Bob using private key $PRIVKEY_3"
+echo "hal-simplicity simplicity sighash \"$PSET\" 0 \"$CMR\" -x \"$PRIVKEY_3\""
+hal-simplicity simplicity sighash "$PSET" 0 "$CMR" -x "$PRIVKEY_3" | jq
+SIGNATURE_3=$(hal-simplicity simplicity sighash "$PSET" 0 "$CMR" -x "$PRIVKEY_3" | jq -r .signature)
+echo "Bob's signature is $SIGNATURE_3 (different from JSON due to signing nonce)"
+
+pause
+
+# ===== STEP 8: UPDATE WITNESS FILE =====
+echo "=== Updating Witness File with Signatures ==="
+
+# Put the signatures into the appropriate place in the .wit file
+# For p2ms.wit, we need to replace the first and third signatures in the array
+# Format: [Some(0xSIG1), None, Some(0xSIG3)]
+echo "Copying signatures into copy of witness file $WITNESS_FILE..."
+cp $WITNESS_FILE "$TMPDIR/witness.wit"
+
+# Display original witness file
+echo "Original witness file:"
+cat "$TMPDIR/witness.wit"
+echo
+
+# Replace first signature (position 0)
+sed -i '' "s/Some(0x[0-9a-f]*)/Some(0x$SIGNATURE_1)/" "$TMPDIR/witness.wit"
+# Replace third signature (position 2) - match the second occurrence of Some(0x...)
+sed -i '' "s/\(Some(0x$SIGNATURE_1)[^,]*, None, \)Some(0x[0-9a-f]*)/\1Some(0x$SIGNATURE_3)/" "$TMPDIR/witness.wit"
+
+# Display updated witness file
+echo "Updated witness file:"
+cat "$TMPDIR/witness.wit"
+echo
+
+echo "Recompiling Simplicity program with attached populated witness file..."
+echo "simc $PROGRAM_SOURCE \"$TMPDIR/witness.wit\""
+simc $PROGRAM_SOURCE "$TMPDIR/witness.wit" | tee "$TMPDIR/compiled-with-witness"
+
+PROGRAM=$(sed '1d;3,$d' "$TMPDIR/compiled-with-witness")
+WITNESS=$(sed '1,3d;5,$d' "$TMPDIR/compiled-with-witness")
+
+echo "PROGRAM length: ${#PROGRAM}"
+echo "WITNESS length: ${#WITNESS}"
+
+pause
+
+# ===== STEP 9: FINALIZE PSET =====
+echo "=== Finalizing PSET ==="
+
+echo "hal-simplicity simplicity pset finalize \"$PSET\" 0 \"$PROGRAM\" \"$WITNESS\""
+FINALIZE_RESULT=$(hal-simplicity simplicity pset finalize "$PSET" 0 "$PROGRAM" "$WITNESS")
+echo "$FINALIZE_RESULT" | jq
+
+# Check if finalization was successful
+if echo "$FINALIZE_RESULT" | jq -e '.error' > /dev/null 2>&1; then
+    echo "ERROR: Failed to finalize PSET"
+    echo "$FINALIZE_RESULT" | jq
+    exit 1
+fi
+
+PSET=$(echo "$FINALIZE_RESULT" | jq -r .pset)
+
+if [ "$PSET" = "null" ] || [ -z "$PSET" ]; then
+    echo "ERROR: PSET finalization returned null or empty"
+    exit 1
+fi
+
+echo "PSET finalized successfully"
+
+pause
+
+# ===== STEP 10: FINALIZE PSBT =====
+echo "=== Finalizing PSBT ==="
+
+if [ -n "${ELEMENTS_CLI:-}" ]; then
+    echo "$ELEMENTS_CLI finalizepsbt \"$PSET\""
+    $ELEMENTS_CLI finalizepsbt "$PSET" | jq
+    RAW_TX=$($ELEMENTS_CLI finalizepsbt "$PSET" | jq -r .hex)
+else
+    echo "ERROR: elements-cli not available for PSBT finalization"
+    exit 1
+fi
+
+pause
+
+# ===== STEP 11: BROADCAST TRANSACTION =====
+echo "=== Broadcasting Transaction ==="
+echo "Submitting raw transaction via Liquid Testnet web API..."
+echo -n "Resulting transaction ID is "
+TXID=$(curl -s -X POST "$ESPLORA_API/tx" -d "$RAW_TX")
+echo $TXID
+echo "View online at https://blockstream.info/liquidtestnet/tx/$TXID?expand"
+
+# Verify transaction
+echo
+echo "Verifying transaction..."
+echo "Waiting for transaction to be indexed by Esplora API..."
+
+MAX_VERIFY_ATTEMPTS=30
+VERIFY_ATTEMPT=0
+TX_RESPONSE=""
+
+while [ $VERIFY_ATTEMPT -lt $MAX_VERIFY_ATTEMPTS ]; do
+    echo "Attempt $((VERIFY_ATTEMPT+1))/$MAX_VERIFY_ATTEMPTS: Checking transaction status..."
+    
+    TX_RESPONSE=$(curl -s "$ESPLORA_API/tx/$TXID")
+    
+    # Check if response is valid JSON
+    if echo "$TX_RESPONSE" | jq empty 2>/dev/null; then
+        echo "Transaction found and confirmed!"
+        echo "$TX_RESPONSE" | jq
+        break
+    fi
+    
+    VERIFY_ATTEMPT=$((VERIFY_ATTEMPT+1))
+    
+    if [ $VERIFY_ATTEMPT -lt $MAX_VERIFY_ATTEMPTS ]; then
+        sleep 3
+    fi
+done
+
+if [ $VERIFY_ATTEMPT -eq $MAX_VERIFY_ATTEMPTS ]; then
+    echo "Transaction not yet indexed after $MAX_VERIFY_ATTEMPTS attempts."
+    echo "Response from API (not JSON):"
+    echo "$TX_RESPONSE"
+    echo
+    echo "Note: Transaction may still be pending in mempool."
+    echo "Check the explorer link above for current status."
+fi
+
+echo
+echo "=== Contract Lifecycle Complete ==="
+echo "Contract Address: $CONTRACT_ADDRESS"
+echo "Funding TX: $FAUCET_TRANSACTION"
+echo "Claim TX: $TXID"
+echo

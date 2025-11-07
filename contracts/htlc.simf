@@ -36,6 +36,8 @@ fn cancel_spend(sender_sig: Signature) {
 }
 
 fn main() {
+    // Update the nonce before compiling the contract
+    let nonce: u256 = 1234;
     match witness::COMPLETE_OR_CANCEL {
         Left(preimage_sig: (u256, Signature)) => {
             let (preimage, recipient_sig): (u256, Signature) = preimage_sig;
