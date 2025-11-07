@@ -51,12 +51,14 @@ fn create_vault(
 
 // ============================================================================
 // deposit - Deposit funds and calculate broker fee
+// Returns: (new_balance, pending_status)
 // ============================================================================
 fn deposit(
     current_balance: u64,
     amount: u64,
-    broker_fee_bp: u32
-) -> u64 {
+    broker_fee_bp: u32,
+    pending: Either<(), (u64, bool)>
+) -> (u64, Either<(), (u64, bool)>) {
     // Calculate broker fee: (amount * broker_fee_bp) / 10000
     // Approach: (amount / 10000) * broker_fee_bp
     // This loses some precision but avoids overflow
@@ -74,67 +76,120 @@ fn deposit(
 
     // Subtract fee from amount
     // jet::subtract_64 returns (bool, u64) where bool indicates underflow
-    let (_, net_amount): (bool, u64) = jet::subtract_64(amount, fee);
+    let (underflow, net_amount): (bool, u64) = jet::subtract_64(amount, fee);
 
     // Add to current balance
     // jet::add_64 returns (bool, u64) where bool indicates overflow
-    let (_, new_balance): (bool, u64) = jet::add_64(current_balance, net_amount);
+    let (overflow, new_balance): (bool, u64) = jet::add_64(current_balance, net_amount);
 
-    new_balance
+    // Deposit doesn't affect pending operations
+    (new_balance, pending)
 }
 
 // ============================================================================
 // initiate_planned_withdrawal - Initiate withdrawal with timelock validation
+// Returns: (balance, pending_status) where pending_status = Right((amount, false))
 // ============================================================================
 fn initiate_planned_withdrawal(
     current_balance: u64,
     amount: u64
-) -> u64 {
+) -> (u64, Either<(), (u64, bool)>) {
     // Validate sufficient balance
     assert!(jet::le_64(amount, current_balance));
 
-    // In production: create PendingOperation with timelock
-    // For now: just validate and return balance unchanged
-    current_balance
+    // Create pending operation: Right((amount, is_vetoed=false))
+    // In production: would also store timelock and participant signatures
+    (current_balance, Right((amount, false)))
 }
 
 // ============================================================================
 // execute_planned_withdrawal - Execute withdrawal after timelock expires
+// Returns: (new_balance, Left(())) - clears pending operation
 // ============================================================================
 fn execute_planned_withdrawal(
     current_balance: u64,
-    amount: u64
-) -> u64 {
-    // In production: validate timelock expired and not vetoed
-    // For now: validate sufficient balance and subtract
-    assert!(jet::le_64(amount, current_balance));
+    pending: Either<(), (u64, bool)>
+) -> (u64, Either<(), (u64, bool)>) {
+    // In production: validate timelock expired and operation not vetoed
+    match pending {
+        Left(unit: ()) => {
+            // No pending operation - fail
+            assert!(jet::lt_32(1, 0));
+            (current_balance, Left(()))
+        },
+        Right(op: (u64, bool)) => {
+            let (amount, is_vetoed): (u64, bool) = op;
 
-    let (_, new_balance): (bool, u64) = jet::subtract_64(current_balance, amount);
+            // Check if operation was vetoed
+            match is_vetoed {
+                true => {
+                    // Operation vetoed - fail execution
+                    assert!(jet::lt_32(1, 0));
+                    (current_balance, Right((amount, is_vetoed)))
+                },
+                false => {
+                    // Execute withdrawal
+                    assert!(jet::le_64(amount, current_balance));
+                    let (overflow, new_balance): (bool, u64) = jet::subtract_64(current_balance, amount);
 
-    new_balance
+                    // Clear pending operation
+                    (new_balance, Left(()))
+                }
+            }
+        }
+    }
+}
+
+// ============================================================================
+// veto_operation - Veto a pending operation (any participant can veto)
+// Returns: (balance, Right((amount, true))) - marks operation as vetoed
+// ============================================================================
+fn veto_operation(
+    current_balance: u64,
+    pending: Either<(), (u64, bool)>
+) -> (u64, Either<(), (u64, bool)>) {
+    // Mark pending operation as vetoed
+    match pending {
+        Left(unit: ()) => {
+            // No pending operation to veto - fail
+            assert!(jet::lt_32(1, 0));
+            (current_balance, Left(()))
+        },
+        Right(op: (u64, bool)) => {
+            let (amount, old_veto_status): (u64, bool) = op;
+            // Mark as vetoed: Right((amount, true))
+            (current_balance, Right((amount, true)))
+        }
+    }
 }
 
 // ============================================================================
 // operation - Route to create_vault, deposit, or withdrawal based on operation type
-// Uses nested Either to support 4+ operations:
+// Uses nested Either to support 5+ operations:
 // - Left = CreateVault
 // - Right(Left) = Deposit
 // - Right(Right(Left)) = InitiatePlannedWithdrawal
-// - Right(Right(Right)) = ExecutePlannedWithdrawal
+// - Right(Right(Right(Left))) = VetoOperation
+// - Right(Right(Right(Right))) = ExecutePlannedWithdrawal
+// Returns: (balance, pending_status)
 // ============================================================================
 fn operation(
     balance: u64,
+    pending: Either<(), (u64, bool)>,
     op: Either<
         (u256, u256, u256, u32, u64, u32, u32, u32, u32),  // CreateVault params
         Either<
             (u64, u32),  // Deposit params: amount, broker_fee_bp
             Either<
                 u64,     // InitiatePlannedWithdrawal params: amount
-                u64      // ExecutePlannedWithdrawal params: amount
+                Either<
+                    (),  // VetoOperation (no params needed - uses pending)
+                    ()   // ExecutePlannedWithdrawal (no params needed - uses pending)
+                >
             >
         >
     >
-) -> u64 {
+) -> (u64, Either<(), (u64, bool)>) {
     match op {
         Left(vault_params: (u256, u256, u256, u32, u64, u32, u32, u32, u32)) => {
             // CreateVault operation
@@ -154,26 +209,36 @@ fn operation(
                 key_recovery_timelock,
                 params_change_timelock
             );
-            balance
+            // CreateVault returns balance with no pending operation
+            (balance, Left(()))
         },
-        Right(other_ops: Either<(u64, u32), Either<u64, u64>>) => {
+        Right(other_ops: Either<(u64, u32), Either<u64, Either<(), ()>>>) => {
             // Nested match for Deposit or Withdrawal operations
             match other_ops {
                 Left(deposit_params: (u64, u32)) => {
                     // Deposit operation
                     let (amount, broker_fee_bp): (u64, u32) = deposit_params;
-                    deposit(balance, amount, broker_fee_bp)
+                    deposit(balance, amount, broker_fee_bp, pending)
                 },
-                Right(withdrawal_ops: Either<u64, u64>) => {
-                    // Nested match for Initiate or Execute withdrawal
+                Right(withdrawal_ops: Either<u64, Either<(), ()>>) => {
+                    // Nested match for withdrawal-related operations
                     match withdrawal_ops {
                         Left(amount: u64) => {
                             // InitiatePlannedWithdrawal operation
                             initiate_planned_withdrawal(balance, amount)
                         },
-                        Right(amount: u64) => {
-                            // ExecutePlannedWithdrawal operation
-                            execute_planned_withdrawal(balance, amount)
+                        Right(veto_or_execute: Either<(), ()>) => {
+                            // Nested match for Veto or Execute
+                            match veto_or_execute {
+                                Left(unit: ()) => {
+                                    // VetoOperation
+                                    veto_operation(balance, pending)
+                                },
+                                Right(unit: ()) => {
+                                    // ExecutePlannedWithdrawal operation
+                                    execute_planned_withdrawal(balance, pending)
+                                }
+                            }
                         }
                     }
                 }
@@ -183,12 +248,15 @@ fn operation(
 }
 
 // ============================================================================
-// Main entry point - Simulates vault creation + 2 deposits + withdrawal flow
+// Main entry point - Simulates vault creation + deposits + withdrawal + veto flow
+// Now tracks both balance and pending operation status
 // ============================================================================
 fn main() {
     // Step 1: Create vault
-    let balance_0: u64 = operation(
+    // Returns: (balance=0, pending=None)
+    let (balance_0, pending_0): (u64, Either<(), (u64, bool)>) = operation(
         0,
+        Left(()),  // No pending operation initially
         Left((
             witness::SAVER_PUBKEY,
             witness::BROKER_PUBKEY,
@@ -204,8 +272,10 @@ fn main() {
 
     // Step 2: First deposit - 100,000 sats
     // After 2.5% fee (2,500 sats): 97,500 sats
-    let balance_1: u64 = operation(
+    // Returns: (balance=97500, pending=None)
+    let (balance_1, pending_1): (u64, Either<(), (u64, bool)>) = operation(
         balance_0,
+        pending_0,
         Right(Left((100000, witness::BROKER_FEE_BP)))
     );
     assert!(jet::eq_64(balance_1, 97500));
@@ -213,26 +283,65 @@ fn main() {
     // Step 3: Second deposit - 50,000 sats
     // After 2.5% fee (1,250 sats): 48,750 sats
     // Total = 97,500 + 48,750 = 146,250 sats
-    let balance_2: u64 = operation(
+    // Returns: (balance=146250, pending=None)
+    let (balance_2, pending_2): (u64, Either<(), (u64, bool)>) = operation(
         balance_1,
+        pending_1,
         Right(Left((50000, witness::BROKER_FEE_BP)))
     );
     assert!(jet::eq_64(balance_2, 146250));
 
     // Step 4: Initiate planned withdrawal - 50,000 sats
-    // Balance unchanged (just creates pending operation in production)
-    let balance_3: u64 = operation(
+    // Balance unchanged, creates pending operation
+    // Returns: (balance=146250, pending=Some((50000, false)))
+    let (balance_3, pending_3): (u64, Either<(), (u64, bool)>) = operation(
         balance_2,
+        pending_2,
         Right(Right(Left(50000)))
     );
     assert!(jet::eq_64(balance_3, 146250));
 
     // Step 5: Execute planned withdrawal - 50,000 sats
-    // After timelock expires in production
-    // Remaining = 146,250 - 50,000 = 96,250 sats
-    let balance_4: u64 = operation(
+    // After timelock expires in production, withdraws the pending amount
+    // Returns: (balance=96250, pending=None)
+    let (balance_4, pending_4): (u64, Either<(), (u64, bool)>) = operation(
         balance_3,
-        Right(Right(Right(50000)))
+        pending_3,
+        Right(Right(Right(Right(()))))
     );
-    assert!(jet::eq_64(balance_4, 96250))
+    assert!(jet::eq_64(balance_4, 96250));
+
+    // Step 6: Initiate another planned withdrawal - 30,000 sats
+    // Balance unchanged, creates new pending operation
+    // Returns: (balance=96250, pending=Some((30000, false)))
+    let (balance_5, pending_5): (u64, Either<(), (u64, bool)>) = operation(
+        balance_4,
+        pending_4,
+        Right(Right(Left(30000)))
+    );
+    assert!(jet::eq_64(balance_5, 96250));
+
+    // Step 7: Veto the withdrawal - 30,000 sats
+    // Balance unchanged, marks pending operation as vetoed
+    // Returns: (balance=96250, pending=Some((30000, true)))
+    let (balance_6, pending_6): (u64, Either<(), (u64, bool)>) = operation(
+        balance_5,
+        pending_5,
+        Right(Right(Right(Left(()))))
+    );
+    assert!(jet::eq_64(balance_6, 96250));
+
+    // Verify pending operation is marked as vetoed
+    match pending_6 {
+        Left(unit: ()) => {
+            // Should not be None - fail
+            assert!(jet::lt_32(1, 0))
+        },
+        Right(op: (u64, bool)) => {
+            let (amount, is_vetoed): (u64, bool) = op;
+            // Verify amount is 30000 and is_vetoed is true
+            assert!(jet::eq_64(amount, 30000));
+            assert!(is_vetoed)
+        }
+    }
 }
