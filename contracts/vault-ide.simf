@@ -69,37 +69,160 @@ fn create_vault(
     assert!(jet::le_32(broker_fee_bp, 10000));
 
     // Validate timelocks are positive
-    // planned_timelock > 0
     assert!(jet::lt_32(0, planned_timelock));
-
-    // urgent_timelock > 0
     assert!(jet::lt_32(0, urgent_timelock));
-
-    // urgent_timelock <= planned_timelock
     assert!(jet::le_32(urgent_timelock, planned_timelock));
-
-    // key_recovery_timelock > 0
     assert!(jet::lt_32(0, key_recovery_timelock));
-
-    // params_change_timelock > 0
     assert!(jet::lt_32(0, params_change_timelock));
 }
 
 // ============================================================================
-// Main entry point
+// deposit - Deposit funds and calculate broker fee
+// ============================================================================
+fn deposit(
+    current_balance: u64,
+    amount: u64,
+    broker_fee_bp: u32
+) -> u64 {
+    // Calculate broker fee: (amount * broker_fee_bp) / 10000
+    // Approach: (amount / 10000) * broker_fee_bp
+    // This loses some precision but avoids overflow
+
+    // Step 1: Divide amount by 10000
+    let amount_div_10k: u64 = jet::divide_64(amount, 10000);
+
+    // Step 2: Multiply by broker_fee_bp using jet::multiply_32
+    // jet::multiply_32(u32, u32) -> u64
+    // Extract lower 32 bits of amount_div_10k (should always fit since we divided by 10000)
+    let amount_div_u32: u32 = jet::rightmost_64_32(amount_div_10k);
+
+    // Step 3: Calculate fee: amount_div_u32 * broker_fee_bp
+    let fee: u64 = jet::multiply_32(amount_div_u32, broker_fee_bp);
+
+    // Subtract fee from amount
+    // jet::subtract_64 returns (bool, u64) where bool indicates underflow
+    let (_, net_amount): (bool, u64) = jet::subtract_64(amount, fee);
+
+    // Add to current balance
+    // jet::add_64 returns (bool, u64) where bool indicates overflow
+    let (_, new_balance): (bool, u64) = jet::add_64(current_balance, net_amount);
+
+    new_balance
+}
+
+// ============================================================================
+// initiate_planned_withdrawal - Initiate withdrawal with timelock validation
+// ============================================================================
+fn initiate_planned_withdrawal(
+    current_balance: u64,
+    amount: u64
+) -> u64 {
+    // Validate sufficient balance
+    assert!(jet::le_64(amount, current_balance));
+
+    // Subtract from balance (simplified - in production this would create PendingOperation)
+    let (_, new_balance): (bool, u64) = jet::subtract_64(current_balance, amount);
+
+    new_balance
+}
+
+// ============================================================================
+// operation - Route to create_vault, deposit, or withdrawal based on operation type
+// Uses nested Either to support 3+ operations:
+// - Left = CreateVault
+// - Right(Left) = Deposit
+// - Right(Right) = InitiatePlannedWithdrawal
+// ============================================================================
+fn operation(
+    balance: u64,
+    op: Either<
+        (u256, u256, u256, u32, u64, u32, u32, u32, u32),  // CreateVault params
+        Either<
+            (u64, u32),  // Deposit params: amount, broker_fee_bp
+            u64          // InitiatePlannedWithdrawal params: amount
+        >
+    >
+) -> u64 {
+    match op {
+        Left(vault_params: (u256, u256, u256, u32, u64, u32, u32, u32, u32)) => {
+            // CreateVault operation
+            let (saver, broker, keeper, broker_fee_bp, urgent_fee,
+                 planned_timelock, urgent_timelock,
+                 key_recovery_timelock, params_change_timelock):
+                (u256, u256, u256, u32, u64, u32, u32, u32, u32) = vault_params;
+
+            create_vault(
+                saver,
+                broker,
+                keeper,
+                broker_fee_bp,
+                urgent_fee,
+                planned_timelock,
+                urgent_timelock,
+                key_recovery_timelock,
+                params_change_timelock
+            );
+            balance
+        },
+        Right(deposit_or_withdrawal: Either<(u64, u32), u64>) => {
+            // Nested match for Deposit or InitiatePlannedWithdrawal
+            match deposit_or_withdrawal {
+                Left(deposit_params: (u64, u32)) => {
+                    // Deposit operation
+                    let (amount, broker_fee_bp): (u64, u32) = deposit_params;
+                    deposit(balance, amount, broker_fee_bp)
+                },
+                Right(amount: u64) => {
+                    // InitiatePlannedWithdrawal operation
+                    initiate_planned_withdrawal(balance, amount)
+                }
+            }
+        }
+    }
+}
+
+// ============================================================================
+// Main entry point - Simulates vault creation + 2 deposits + 1 withdrawal
 // ============================================================================
 fn main() {
-    // Validate vault parameters
-    // All validations happen inside create_vault
-    create_vault(
-        param::SAVER_PUBKEY,
-        param::BROKER_PUBKEY,
-        param::KEEPER_PUBKEY,
-        param::BROKER_FEE_BP,
-        param::URGENT_FEE,
-        param::PLANNED_TIMELOCK,
-        param::URGENT_TIMELOCK,
-        param::KEY_RECOVERY_TIMELOCK,
-        param::PARAMS_CHANGE_TIMELOCK
-    )
+    // Step 1: Create vault
+    let balance_0: u64 = operation(
+        0,
+        Left((
+            param::SAVER_PUBKEY,
+            param::BROKER_PUBKEY,
+            param::KEEPER_PUBKEY,
+            param::BROKER_FEE_BP,
+            param::URGENT_FEE,
+            param::PLANNED_TIMELOCK,
+            param::URGENT_TIMELOCK,
+            param::KEY_RECOVERY_TIMELOCK,
+            param::PARAMS_CHANGE_TIMELOCK
+        ))
+    );
+
+    // Step 2: First deposit - 100,000 sats
+    // After 2.5% fee (2,500 sats): 97,500 sats
+    let balance_1: u64 = operation(
+        balance_0,
+        Right(Left((100000, param::BROKER_FEE_BP)))
+    );
+    assert!(jet::eq_64(balance_1, 97500));
+
+    // Step 3: Second deposit - 50,000 sats
+    // After 2.5% fee (1,250 sats): 48,750 sats
+    // Total = 97,500 + 48,750 = 146,250 sats
+    let balance_2: u64 = operation(
+        balance_1,
+        Right(Left((50000, param::BROKER_FEE_BP)))
+    );
+    assert!(jet::eq_64(balance_2, 146250));
+
+    // Step 4: Initiate planned withdrawal - 50,000 sats
+    // Remaining = 146,250 - 50,000 = 96,250 sats
+    let balance_3: u64 = operation(
+        balance_2,
+        Right(Right(50000))
+    );
+    assert!(jet::eq_64(balance_3, 96250))
 }
